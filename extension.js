@@ -153,6 +153,11 @@ export default class ExternalNightLightExtension extends Extension {
             });
     }
 
+    // This extension also runs in the 'unlock-dialog' session mode: Night
+    // Light stays applied on the lock screen for the built-in display, so
+    // disabling the tint here would flash these monitors back to full blue
+    // every time the screen locks. disable() is therefore only called when the
+    // extension is actually turned off or the user logs out.
     disable() {
         if (this._monitorsChangedId)
             Main.layoutManager.disconnect(this._monitorsChangedId);
@@ -192,7 +197,6 @@ export default class ExternalNightLightExtension extends Extension {
             if (serial !== this._refreshSerial)
                 return;
             this._connectors = connectors;
-            console.log(`${LOG_TAG} displays without gamma: ${connectors.join(', ') || 'none'}`);
             this._rebuildOverlays();
         } catch (e) {
             if (serial === this._refreshSerial)

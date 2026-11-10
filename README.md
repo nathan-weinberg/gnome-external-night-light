@@ -39,16 +39,32 @@ The per-monitor multiply overlay is adapted from
 [eitanf1336's DisplayLink Night Light](https://github.com/eitanf1336/dotfiles/tree/HEAD/gnome-extensions/displaylink-nightlight@eitan.local)
 (MIT).
 
+## Requirements
+
+- GNOME Shell 48
+- colord's GObject introspection data (`Colord-1.0.typelib`). Fedora installs
+  it by default; on Debian/Ubuntu it's `gir1.2-colord-1.0`.
+
 ## Install (development)
 
 ```sh
 ln -s ~/Projects/gnome-external-night-light \
-  ~/.local/share/gnome-shell/extensions/external-night-light@local
+  ~/.local/share/gnome-shell/extensions/external-night-light@nathan-weinberg.github.io
 # log out and back in (Wayland), then:
-gnome-extensions enable external-night-light@local
+gnome-extensions enable external-night-light@nathan-weinberg.github.io
 ```
 
 Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-light`
+
+## Packaging for extensions.gnome.org
+
+```sh
+gnome-extensions pack --force \
+  --extra-source=LICENSE --extra-source=THIRD-PARTY-NOTICES.md
+```
+
+This writes `external-night-light@nathan-weinberg.github.io.shell-extension.zip`,
+which you upload at https://extensions.gnome.org/upload/.
 
 ## Limitations
 
