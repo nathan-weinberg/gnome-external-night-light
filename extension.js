@@ -1,8 +1,8 @@
 // Night Light for monitors whose KMS driver exposes no gamma LUT (DisplayLink /
 // evdi). GNOME's Night Light works by having Mutter write a per-CRTC gamma
 // ramp scaled by a blackbody color; on evdi CRTCs that ramp has size 0, so
-// nothing happens. This extension reproduces the same scaling in a shader,
-// restricted to the screen rectangles of those monitors.
+// nothing happens. This extension reproduces the same scaling by painting a
+// multiply-blended overlay over each of those monitors.
 //
 // - Temperature: read live from gsd-color's D-Bus "Temperature" property, the
 //   same value Mutter consumes (it includes the smooth fade in/out).
@@ -10,61 +10,74 @@
 //   exact function Mutter uses, so tints match the gamma-capable displays.
 // - Which monitors: any active CRTC for which Mutter reports an empty gamma
 //   ramp (org.gnome.Mutter.DisplayConfig.GetCrtcGamma).
+// - How: one non-reactive actor per monitor on top of Main.uiGroup, painted
+//   with a Cogl multiply blend (dst = src * dst). Unlike a shader effect on
+//   the whole UI, this needs no offscreen pass and leaves other monitors
+//   untouched. The per-monitor multiply overlay technique is adapted from
+//   eitanf1336's DisplayLink Night Light (MIT):
+//   https://github.com/eitanf1336/dotfiles/tree/HEAD/gnome-extensions/displaylink-nightlight@eitan.local
 
+import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import Colord from 'gi://Colord';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
-import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const EFFECT_NAME = 'external-night-light';
-const MAX_RECTS = 4;
+const LOG_TAG = '[external-night-light]';
 const NEUTRAL_TEMPERATURE = 6500;
-const RECT_INDICES = [...Array(MAX_RECTS).keys()];
 
-const SHADER_DECLARATIONS = `
-uniform vec3 nl_factor;
-${RECT_INDICES.map(i => `uniform vec4 nl_rect${i};`).join('\n')}
+// result = SRC_COLOR * DST_COLOR: scales each channel of what is already on
+// screen, which is exactly what a scaled gamma ramp does.
+// (Cogl's blend-string grammar has no ZERO color source; the literal 0 is the
+// documented way to drop the second term.)
+const MULTIPLY_BLEND = 'RGBA = ADD(SRC_COLOR*(DST_COLOR), 0)';
 
-bool nl_inside(vec2 p, vec4 r) {
-  return r.z > r.x && p.x >= r.x && p.x < r.z && p.y >= r.y && p.y < r.w;
-}
-`;
-
-const SHADER_CODE = `
-vec2 nl_pos = cogl_tex_coord_in[0].xy;
-if (${RECT_INDICES.map(i => `nl_inside(nl_pos, nl_rect${i})`).join(' || ')})
-  cogl_color_out.rgb *= nl_factor;
-`;
-
-const NightLightEffect = GObject.registerClass(
-class NightLightEffect extends Shell.GLSLEffect {
+const TintOverlay = GObject.registerClass(
+class TintOverlay extends Clutter.Actor {
     _init() {
-        super._init();
-        this._factorLoc = this.get_uniform_location('nl_factor');
-        this._rectLocs = RECT_INDICES.map(i => this.get_uniform_location(`nl_rect${i}`));
-        this.setFactor([1, 1, 1]);
-        this.setRects([]);
+        super._init({reactive: false});
+        this._color = new Cogl.Color();
+        this._color.init_from_4f(1, 1, 1, 1);
+        this._pipeline = null;
+        this._failed = false;
     }
 
-    vfunc_build_pipeline() {
-        this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT,
-            SHADER_DECLARATIONS, SHADER_CODE, false);
+    setColor([r, g, b]) {
+        this._color.init_from_4f(r, g, b, 1);
+        this._pipeline?.set_color(this._color);
+        this.queue_redraw();
     }
 
-    setFactor(rgb) {
-        this.set_uniform_float(this._factorLoc, 3, rgb);
-        this.queue_repaint();
-    }
+    // Note: unlike hardware Night Light, this tint shows up in screenshots of
+    // these monitors. Clutter 16 gives JS no way to tell a screenshot paint
+    // from a stage view (rotated views also render offscreen), so it can't be
+    // skipped reliably.
+    vfunc_paint_node(root, paintContext) {
+        const [w, h] = this.get_size();
+        if (this._failed || w <= 0 || h <= 0)
+            return;
 
-    // rects: [[x0, y0, x1, y1], ...] in normalized (0..1) actor coordinates
-    setRects(rects) {
-        for (const i of RECT_INDICES)
-            this.set_uniform_float(this._rectLocs[i], 4, rects[i] ?? [0, 0, 0, 0]);
-        this.queue_repaint();
+        if (!this._pipeline) {
+            try {
+                const ctx = paintContext.get_framebuffer().get_context();
+                const pipeline = Cogl.Pipeline.new(ctx);
+                pipeline.set_blend(MULTIPLY_BLEND);
+                pipeline.set_color(this._color);
+                this._pipeline = pipeline;
+            } catch (e) {
+                // Don't throw on every frame; log once and stop painting.
+                this._failed = true;
+                console.error(`${LOG_TAG} creating multiply pipeline: ${e.message}`);
+                return;
+            }
+        }
+
+        const node = Clutter.PipelineNode.new(this._pipeline);
+        node.add_rectangle(new Clutter.ActorBox({x1: 0, y1: 0, x2: w, y2: h}));
+        root.add_child(node);
     }
 });
 
@@ -102,8 +115,7 @@ const ColorProxy = Gio.DBusProxy.makeProxyWrapper(ColorIface);
 
 export default class ExternalNightLightExtension extends Extension {
     enable() {
-        this._effect = new NightLightEffect();
-        this._attached = false;
+        this._overlays = [];
         this._connectors = []; // connectors whose CRTC has no gamma LUT
         this._temperature = NEUTRAL_TEMPERATURE;
         this._refreshSerial = 0;
@@ -112,7 +124,7 @@ export default class ExternalNightLightExtension extends Extension {
             'org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
             (proxy, error) => {
                 if (error)
-                    console.error(`[${EFFECT_NAME}] DisplayConfig: ${error.message}`);
+                    console.error(`${LOG_TAG} DisplayConfig: ${error.message}`);
                 else
                     this._refreshMonitors();
             });
@@ -121,7 +133,7 @@ export default class ExternalNightLightExtension extends Extension {
             'org.gnome.SettingsDaemon.Color', '/org/gnome/SettingsDaemon/Color',
             (proxy, error) => {
                 if (error) {
-                    console.error(`[${EFFECT_NAME}] gsd-color: ${error.message}`);
+                    console.error(`${LOG_TAG} gsd-color: ${error.message}`);
                     return;
                 }
                 if (!this._color)
@@ -133,21 +145,25 @@ export default class ExternalNightLightExtension extends Extension {
 
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed',
             () => this._refreshMonitors());
-        this._stageSizeId = global.stage.connect('notify::size',
-            () => this._update());
+        // Keep the overlays above anything added to uiGroup later.
+        this._childAddedId = Main.uiGroup.connect('child-added',
+            (group, child) => {
+                if (!this._overlays.includes(child))
+                    this._raiseOverlays();
+            });
     }
 
     disable() {
         if (this._monitorsChangedId)
             Main.layoutManager.disconnect(this._monitorsChangedId);
-        if (this._stageSizeId)
-            global.stage.disconnect(this._stageSizeId);
+        if (this._childAddedId)
+            Main.uiGroup.disconnect(this._childAddedId);
         if (this._colorChangedId)
             this._color.disconnect(this._colorChangedId);
-        this._monitorsChangedId = this._stageSizeId = this._colorChangedId = null;
+        this._monitorsChangedId = this._childAddedId = this._colorChangedId = null;
 
-        this._detach();
-        this._effect = null;
+        this._destroyOverlays();
+        this._overlays = null;
         this._color = null;
         this._displayConfig = null;
         this._refreshSerial++; // invalidate in-flight async refreshes
@@ -176,58 +192,65 @@ export default class ExternalNightLightExtension extends Extension {
             if (serial !== this._refreshSerial)
                 return;
             this._connectors = connectors;
-            console.log(`[${EFFECT_NAME}] displays without gamma: ${connectors.join(', ') || 'none'}`);
-            this._update();
+            console.log(`${LOG_TAG} displays without gamma: ${connectors.join(', ') || 'none'}`);
+            this._rebuildOverlays();
         } catch (e) {
             if (serial === this._refreshSerial)
-                console.error(`[${EFFECT_NAME}] refreshing monitors: ${e.message}`);
+                console.error(`${LOG_TAG} refreshing monitors: ${e.message}`);
         }
     }
 
-    _computeRects() {
+    _rebuildOverlays() {
+        this._destroyOverlays();
         const monitorManager = global.backend.get_monitor_manager();
-        const [stageW, stageH] = global.stage.get_size();
-        if (!stageW || !stageH)
-            return [];
-        const rects = [];
         for (const connector of this._connectors) {
             const index = monitorManager.get_monitor_for_connector(connector);
             const m = Main.layoutManager.monitors[index];
             if (index < 0 || !m)
                 continue;
-            rects.push([m.x / stageW, m.y / stageH,
-                (m.x + m.width) / stageW, (m.y + m.height) / stageH]);
+            const overlay = new TintOverlay();
+            overlay.set_position(m.x, m.y);
+            overlay.set_size(m.width, m.height);
+            // uiGroup tears its children down at logout without calling
+            // disable(); forget the overlay so later updates don't touch it.
+            overlay.connect('destroy', () => {
+                const i = this._overlays?.indexOf(overlay) ?? -1;
+                if (i >= 0)
+                    this._overlays.splice(i, 1);
+            });
+            Main.uiGroup.add_child(overlay);
+            this._overlays.push(overlay);
         }
-        return rects.slice(0, MAX_RECTS);
+        this._raiseOverlays();
+        this._update();
+    }
+
+    _raiseOverlays() {
+        for (const overlay of this._overlays)
+            Main.uiGroup.set_child_above_sibling(overlay, null);
+    }
+
+    _destroyOverlays() {
+        // Copy: each destroy() removes itself from this._overlays.
+        for (const overlay of [...this._overlays ?? []])
+            overlay.destroy();
+        if (this._overlays)
+            this._overlays.length = 0;
     }
 
     _update() {
-        if (!this._effect)
+        if (!this._overlays?.length)
             return;
-        const rects = this._computeRects();
-        if (this._temperature >= NEUTRAL_TEMPERATURE || rects.length === 0) {
-            this._detach();
-            return;
-        }
+        const active = this._temperature < NEUTRAL_TEMPERATURE;
 
         const rgb = new Colord.ColorRGB();
-        if (!Colord.color_get_blackbody_rgb_full(this._temperature, rgb,
+        if (!active || !Colord.color_get_blackbody_rgb_full(this._temperature, rgb,
             Colord.ColorBlackbodyFlags.USE_PLANCKIAN))
             rgb.R = rgb.G = rgb.B = 1;
 
-        this._effect.setFactor([rgb.R, rgb.G, rgb.B]);
-        this._effect.setRects(rects);
-        if (!this._attached) {
-            // Only pay for the offscreen pass while there is something to tint.
-            Main.uiGroup.add_effect_with_name(EFFECT_NAME, this._effect);
-            this._attached = true;
-        }
-    }
-
-    _detach() {
-        if (this._attached) {
-            Main.uiGroup.remove_effect(this._effect);
-            this._attached = false;
+        for (const overlay of this._overlays) {
+            overlay.setColor([rgb.R, rgb.G, rgb.B]);
+            overlay.visible = active;
         }
     }
 }

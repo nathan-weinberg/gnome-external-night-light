@@ -29,9 +29,15 @@ gdbus call --session --dest org.gnome.Mutter.DisplayConfig \
 - Converts the temperature to RGB with colord's
   `cd_color_get_blackbody_rgb_full(..., USE_PLANCKIAN)`, the same call Mutter
   makes, so the tint matches the displays that do support gamma.
-- Multiplies the colors by that RGB in a GLSL effect on `Main.uiGroup`, limited
-  to those monitors' screen areas. The effect is only attached while
-  the temperature is below 6500K.
+- Puts a non-reactive overlay above each of those monitors at the top of
+  `Main.uiGroup`, painted with a Cogl multiply blend (`dst = src × dst`).
+  That's the same per-channel scaling a gamma ramp does, with no offscreen pass,
+  and monitors that support gamma aren't touched. The overlays are hidden when
+  the temperature is 6500K.
+
+The per-monitor multiply overlay is adapted from
+[eitanf1336's DisplayLink Night Light](https://github.com/eitanf1336/dotfiles/tree/HEAD/gnome-extensions/displaylink-nightlight@eitan.local)
+(MIT).
 
 ## Install (development)
 
@@ -46,7 +52,7 @@ Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-li
 
 ## Limitations
 
-- While active, the whole UI is drawn to an offscreen buffer and full-screen
-  windows don't get direct scanout, so it costs some GPU time.
 - The hardware cursor isn't tinted.
-- Supports up to 4 gamma-less monitors.
+- Screenshots of these monitors include the tint, unlike hardware Night Light.
+  Clutter 16 gives JS no reliable way to skip screenshot paints.
+- Changes to the code only take effect after logging out and back in (Wayland).
