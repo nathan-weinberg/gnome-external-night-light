@@ -59,4 +59,5 @@ Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-li
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The overlay technique is adapted from MIT-licensed
+work; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
