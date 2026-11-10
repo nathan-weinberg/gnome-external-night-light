@@ -1,6 +1,6 @@
 # Night Light for Gamma-less Displays
 
-A GNOME Shell 48 extension that makes the built-in Night Light work on
+A GNOME Shell 48–51 extension that makes the built-in Night Light work on
 monitors whose driver has no gamma lookup table. The main case is DisplayLink
 docks running on the `evdi` driver (for example via
 [displaylink-rpm](https://github.com/displaylink-rpm/displaylink-rpm)).
@@ -41,7 +41,7 @@ The per-monitor multiply overlay is adapted from
 
 ## Requirements
 
-- GNOME Shell 48
+- GNOME Shell 48, 49, 50 or 51
 - colord's GObject introspection data (`Colord-1.0.typelib`). Fedora installs
   it by default; on Debian/Ubuntu it's `gir1.2-colord-1.0`.
 
@@ -55,6 +55,35 @@ gnome-extensions enable external-night-light@nathan-weinberg.github.io
 ```
 
 Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-light`
+
+## Testing
+
+`.github/workflows/gnome-compat.yml` runs `tests/` on every Fedora release
+that ships a supported GNOME (42 → 48, 43 → 49, 44 → 50, 45 → 51), plus
+rawhide as an early warning. Each job starts a real headless `gnome-shell`
+with a virtual monitor and a mock `gsd-color`, then checks that the extension:
+
+- loads, and runs its monitor detection without logging errors;
+- tints the screen by exactly the factors colord gives Mutter for 3000K
+  (compared with screenshots taken before and after);
+- removes its overlay when disabled.
+
+Headless virtual monitors don't show up in `DisplayConfig.GetResources`, so
+the test points the extension at the virtual monitor by hand. The detection
+itself is only checked for not erroring. The test loads the extension even
+when `metadata.json` doesn't list that GNOME version, and prints a warning
+when that's the case.
+
+Run one version locally:
+
+```sh
+podman run --rm --privileged -v "$PWD:/src:z" -w /src \
+  registry.fedoraproject.org/fedora:43 tests/ci.sh
+```
+
+`--privileged` is needed because GNOME 49+ encodes screenshots through
+glycin, which sandboxes its loaders with bubblewrap. Logs and screenshots go
+to `test-artifacts/`.
 
 ## Packaging for extensions.gnome.org
 

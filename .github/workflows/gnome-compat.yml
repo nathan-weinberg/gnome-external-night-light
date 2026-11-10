@@ -1,0 +1,50 @@
+name: GNOME compatibility
+
+# Runs the extension in a real headless gnome-shell on each GNOME release
+# Fedora ships, and checks that it loads, tints a monitor with exactly
+# Mutter's Night Light color, and disables cleanly. See tests/.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: GNOME ${{ matrix.gnome }} (Fedora ${{ matrix.fedora }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {fedora: '42', gnome: '48', experimental: false}
+          - {fedora: '43', gnome: '49', experimental: false}
+          - {fedora: '44', gnome: '50', experimental: false}
+          - {fedora: '45', gnome: '51', experimental: false}
+          - {fedora: rawhide, gnome: next, experimental: true}
+    container:
+      image: registry.fedoraproject.org/fedora:${{ matrix.fedora }}
+      # gnome-shell 49+ encodes screenshots through glycin, whose loaders run
+      # in a bubblewrap sandbox; bwrap needs namespaces a default container
+      # doesn't allow.
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run test
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/test-artifacts
+        run: tests/ci.sh
+
+      - name: Upload logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnome-${{ matrix.gnome }}-fedora-${{ matrix.fedora }}
+          path: test-artifacts/
+          if-no-files-found: ignore

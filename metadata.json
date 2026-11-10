@@ -2,7 +2,7 @@
   "uuid": "external-night-light@nathan-weinberg.github.io",
   "name": "Night Light for Gamma-less Displays",
   "description": "Applies GNOME's Night Light color temperature to monitors whose driver has no gamma LUT (e.g. DisplayLink/evdi). Follows the built-in Night Light schedule and temperature exactly; monitors that support gamma are left alone.\n\nRequires colord's GObject introspection data (installed by default on Fedora; on some distros it is a separate package such as gir1.2-colord-1.0).",
-  "shell-version": ["48"],
+  "shell-version": ["48", "49", "50", "51"],
   "session-modes": ["user", "unlock-dialog"],
   "url": "https://github.com/nathan-weinberg/gnome-external-night-light",
   "version-name": "1.0"
