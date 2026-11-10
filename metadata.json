@@ -1,0 +1,8 @@
+{
+  "uuid": "external-night-light@local",
+  "name": "Night Light for Gamma-less Displays",
+  "description": "Applies GNOME's Night Light color temperature with a shader to monitors whose driver has no gamma LUT (e.g. DisplayLink/evdi). Follows the built-in Night Light schedule and temperature exactly; monitors that support gamma are left alone.",
+  "shell-version": ["48"],
+  "session-modes": ["user", "unlock-dialog"],
+  "version": 1
+}
