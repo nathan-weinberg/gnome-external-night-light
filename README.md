@@ -56,3 +56,7 @@ Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-li
 - Screenshots of these monitors include the tint, unlike hardware Night Light.
   Clutter 16 gives JS no reliable way to skip screenshot paints.
 - Changes to the code only take effect after logging out and back in (Wayland).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
