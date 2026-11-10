@@ -60,7 +60,8 @@ Logs: `journalctl --user -b -o cat /usr/bin/gnome-shell | grep external-night-li
 
 `.github/workflows/gnome-compat.yml` runs `tests/` on every Fedora release
 that ships a supported GNOME (42 → 48, 43 → 49, 44 → 50, 45 → 51), plus
-rawhide as an early warning. Each job starts a real headless `gnome-shell`
+rawhide as an early warning, and on the supported Ubuntu releases that do
+(26.04 LTS → 50, 26.10 → 51). Each job starts a real headless `gnome-shell`
 with a virtual monitor and a mock `gsd-color`, then checks that the extension:
 
 - loads, and runs its monitor detection without logging errors;
@@ -80,6 +81,8 @@ Run one version locally:
 podman run --rm --privileged -v "$PWD:/src:z" -w /src \
   registry.fedoraproject.org/fedora:43 tests/ci.sh
 ```
+
+Any Ubuntu image works the same way, e.g. `docker.io/library/ubuntu:26.04`.
 
 `--privileged` is needed because GNOME 49+ encodes screenshots through
 glycin, which sandboxes its loaders with bubblewrap. Logs and screenshots go
